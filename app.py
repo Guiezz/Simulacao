@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
 
 def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None):
     vol = curva_av['Volume (hm³)'].values
@@ -64,16 +65,21 @@ def display_results(nome_reservatorio, resultados):
     st.subheader(f"Resultados - {nome_reservatorio}")
     meses = np.arange(1, len(resultados['volumes']) + 1)
 
-    fig, ax = plt.subplots()
-    ax.plot(meses, resultados['volumes'], label='Volume (hm³)')
-    ax.plot(meses, resultados['retiradas'], label='Retirada (hm³)', linestyle='--')
-    ax.plot(meses, resultados['evaporacao'], label='Evaporação (hm³)', linestyle=':')
-    ax.set_xlabel('Mês')
-    ax.set_ylabel('hm³')
-    ax.set_title(f'Simulação do Reservatório - {nome_reservatorio}')
-    ax.legend()
-    ax.grid(True)
-    st.pyplot(fig)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=meses, y=resultados['volumes'], mode='lines+markers', name='Volume (hm³)'))
+    fig.add_trace(go.Scatter(x=meses, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)', line=dict(dash='dash')))
+    fig.add_trace(go.Scatter(x=meses, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)', line=dict(dash='dot')))
+
+    fig.update_layout(
+        title=f'Simulação do Reservatório - {nome_reservatorio}',
+        xaxis_title='Mês',
+        yaxis_title='Volume (hm³)',
+        legend_title='Variáveis',
+        hovermode='x unified',
+        template='plotly_white'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
     df_resultados = pd.DataFrame({
         'Mês': meses,
@@ -96,6 +102,7 @@ def display_results(nome_reservatorio, resultados):
         for alerta in resultados['alertas']:
             st.text(alerta)
 
+
 def main():
     st.title("Simulador de Reservatórios com Restrições Operacionais")
     st.markdown("Carregue um ou mais arquivos Excel com os dados dos reservatórios.")
@@ -113,9 +120,12 @@ def main():
 
                 restricoes = None
                 try:
-                    restricoes = pd.read_excel(arquivo, sheet_name='Restricoes')
+                    restricoes_raw = pd.read_excel(arquivo, sheet_name='Restricoes')
+                    st.markdown(f"**Editar restrições operacionais - {nome_reservatorio}**")
+                    restricoes = st.data_editor(restricoes_raw, num_rows="dynamic",
+                                                key=f"restricoes_{nome_reservatorio}")
                 except:
-                    pass  # restrições são opcionais
+                    st.info(f"O arquivo de {nome_reservatorio} não contém a aba 'Restricoes'. Ela é opcional.")
 
                 volume_inicial = st.number_input(f"Volume inicial - {nome_reservatorio} (hm³)", min_value=0.0, value=float(curva_av['Volume (hm³)'].min()))
 

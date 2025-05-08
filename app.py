@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from io import BytesIO
+
+
 def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None):
     vol = curva_av['Volume (hm³)'].values
     area = curva_av['Área (km²)'].values
@@ -44,9 +49,9 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
         v_atual = min(v_atual, volume_max)
 
         if v_atual < volume_min_oper:
-            alertas.append(f"Mês {t+1}: volume abaixo do mínimo operacional ({v_atual:.2f} hm³)")
+            alertas.append(f"Mês {t + 1}: volume abaixo do mínimo operacional ({v_atual:.2f} hm³)")
         if v_atual < volume_morto:
-            alertas.append(f"Mês {t+1}: volume abaixo do volume morto ({v_atual:.2f} hm³)")
+            alertas.append(f"Mês {t + 1}: volume abaixo do volume morto ({v_atual:.2f} hm³)")
 
         evap_hm3[t] = evap_volume
         volumes[t + 1] = v_atual
@@ -59,12 +64,17 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
         'alertas': alertas
     }
 
+
 def display_results(nome_reservatorio, resultados):
+    st.subheader(f"Resultados - {nome_reservatorio}")
     meses = np.arange(1, len(resultados['volumes']) + 1)
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=meses, y=resultados['volumes'], mode='lines+markers', name='Volume (hm³)'))
-    fig.add_trace(go.Scatter(x=meses, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)', line=dict(dash='dash')))
-    fig.add_trace(go.Scatter(x=meses, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)', line=dict(dash='dot')))
+    fig.add_trace(go.Scatter(x=meses, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)',
+                             line=dict(dash='dash')))
+    fig.add_trace(go.Scatter(x=meses, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)',
+                             line=dict(dash='dot')))
 
     fig.update_layout(
         title=f'Simulação do Reservatório - {nome_reservatorio}',
@@ -87,16 +97,68 @@ def display_results(nome_reservatorio, resultados):
 
     csv = df_resultados.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 Baixar CSV",
+        label="💾 Baixar CSV",
         data=csv,
         file_name=f'simulacao_{nome_reservatorio}.csv',
         mime='text/csv'
     )
 
+    pdf_file = gerar_relatorio_pdf(nome_reservatorio, resultados)
+    st.download_button(
+        label="📄 Baixar Relatório em PDF",
+        data=pdf_file,
+        file_name=f'relatorio_{nome_reservatorio}.pdf',
+        mime='application/pdf'
+    )
+
     if resultados['alertas']:
-        st.warning("⚠️ Alertas durante a simulação:")
+        st.warning("Ocorreram os seguintes alertas durante a simulação:")
         for alerta in resultados['alertas']:
             st.text(alerta)
+
+
+def gerar_relatorio_pdf(nome_reservatorio, resultados):
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, height - 50, f"Relatório de Simulação - {nome_reservatorio}")
+
+    c.setFont("Helvetica", 12)
+    y = height - 100
+
+    def linha(texto, espaco=20):
+        nonlocal y
+        c.drawString(50, y, texto)
+        y -= espaco
+
+    linha("Resumo dos Resultados:")
+    linha(f"Meses simulados: {len(resultados['volumes'])}")
+    linha(f"Volume final: {resultados['volumes'][-1]:.2f} hm³")
+    linha("")
+
+    linha("Alertas Operacionais:")
+    if resultados["alertas"]:
+        for alerta in resultados["alertas"]:
+            linha(f"- {alerta}", espaco=15)
+    else:
+        linha("Nenhum alerta gerado.", espaco=15)
+
+    linha("")
+    linha("Volumes (hm³):")
+    for i, vol in enumerate(resultados["volumes"]):
+        linha(f"Mês {i + 1}: {vol:.2f}", espaco=15)
+        if y < 100:
+            c.showPage()
+            y = height - 50
+            c.setFont("Helvetica", 12)
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
 
 def main():
     st.title("💧 Simulador de Reservatórios com Restrições Operacionais")
@@ -117,8 +179,8 @@ def main():
                     evaporacao_df = pd.read_excel(arquivo, sheet_name='Evaporacao')
 
                     if not all(col in afluencias_df.columns for col in ['Afluência (hm³)']) or \
-                       not all(col in demandas_df.columns for col in ['Demanda (hm³)']) or \
-                       not all(col in evaporacao_df.columns for col in ['Evaporação (mm)']):
+                            not all(col in demandas_df.columns for col in ['Demanda (hm³)']) or \
+                            not all(col in evaporacao_df.columns for col in ['Evaporação (mm)']):
                         st.error(f"{nome_reservatorio}: Nomes de colunas incorretos.")
                         continue
 
@@ -138,7 +200,8 @@ def main():
                     try:
                         restricoes_raw = pd.read_excel(arquivo, sheet_name='Restricoes')
                         st.markdown(f"**Editar restrições operacionais - {nome_reservatorio}**")
-                        restricoes = st.data_editor(restricoes_raw, num_rows="dynamic", key=f"restricoes_{nome_reservatorio}")
+                        restricoes = st.data_editor(restricoes_raw, num_rows="dynamic",
+                                                    key=f"restricoes_{nome_reservatorio}")
                     except:
                         st.info(f"{nome_reservatorio}: Sem aba 'Restricoes'.")
 
@@ -182,6 +245,8 @@ def main():
                 with tab:
                     display_results(nome_reservatorio, st.session_state.resultados[nome_reservatorio])
         else:
-            st.info("Nenhuma simulação foi executada ainda. Carregue os dados e clique em 'Executar simulações' na aba anterior.")
+            st.info(
+                "Nenhuma simulação foi executada ainda. Carregue os dados e clique em 'Executar simulações' na aba anterior.")
+
 
 main()

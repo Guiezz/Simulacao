@@ -1,5 +1,7 @@
-streamlit
-pandas
-numpy
+streamlit~=1.45.0
+pandas~=2.2.3
+numpy~=2.2.5
 matplotlib
 openpyxl
+
+plotly~=6.0.1

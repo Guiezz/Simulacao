@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 
 def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None):
@@ -33,14 +32,13 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
 
     for t in range(n_meses):
         v_ant = volumes[t]
-        a = area_func(v_ant) * 1e6  # km² -> m²
+        a = area_func(v_ant) * 1e6
         a = max(a, 0)
-        evap_m = evaporacao_mm[t] / 1000  # mm -> m
-        evap_volume = (a * evap_m) / 1e6  # m³ -> hm³
+        evap_m = evaporacao_mm[t] / 1000
+        evap_volume = (a * evap_m) / 1e6
 
         demanda = demandas[t]
         retirada = min(demanda, max(0, v_ant + afluencias[t] - evap_volume))
-
         v_atual = v_ant + afluencias[t] - evap_volume - retirada
         v_atual = max(v_atual, 0)
         v_atual = min(v_atual, volume_max)
@@ -62,9 +60,7 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
     }
 
 def display_results(nome_reservatorio, resultados):
-    st.subheader(f"Resultados - {nome_reservatorio}")
     meses = np.arange(1, len(resultados['volumes']) + 1)
-
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=meses, y=resultados['volumes'], mode='lines+markers', name='Volume (hm³)'))
     fig.add_trace(go.Scatter(x=meses, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)', line=dict(dash='dash')))
@@ -91,49 +87,101 @@ def display_results(nome_reservatorio, resultados):
 
     csv = df_resultados.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="Baixar CSV",
+        label="📥 Baixar CSV",
         data=csv,
         file_name=f'simulacao_{nome_reservatorio}.csv',
         mime='text/csv'
     )
 
     if resultados['alertas']:
-        st.warning("Ocorreram os seguintes alertas durante a simulação:")
+        st.warning("⚠️ Alertas durante a simulação:")
         for alerta in resultados['alertas']:
             st.text(alerta)
 
-
 def main():
-    st.title("Simulador de Reservatórios com Restrições Operacionais")
-    st.markdown("Carregue um ou mais arquivos Excel com os dados dos reservatórios.")
+    st.title("💧 Simulador de Reservatórios com Restrições Operacionais")
 
-    arquivos = st.file_uploader("Enviar arquivos Excel (.xlsx)", type="xlsx", accept_multiple_files=True)
+    aba_upload, aba_resultados = st.tabs(["📂 Upload e Configuração", "📊 Resultados"])
 
-    if arquivos:
-        for arquivo in arquivos:
-            nome_reservatorio = arquivo.name.replace(".xlsx", "")
-            try:
-                curva_av = pd.read_excel(arquivo, sheet_name='CurvaAV')
-                afluencias = pd.read_excel(arquivo, sheet_name='Afluencias')['Afluência (hm³)'].values
-                demandas = pd.read_excel(arquivo, sheet_name='Demandas')['Demanda (hm³)'].values
-                evaporacao_mm = pd.read_excel(arquivo, sheet_name='Evaporacao')['Evaporação (mm)'].values
+    with aba_upload:
+        arquivos = st.file_uploader("Enviar arquivos Excel (.xlsx)", type="xlsx", accept_multiple_files=True)
+        dados_reservatorios = {}
 
-                restricoes = None
+        if arquivos:
+            for arquivo in arquivos:
+                nome_reservatorio = arquivo.name.replace(".xlsx", "")
                 try:
-                    restricoes_raw = pd.read_excel(arquivo, sheet_name='Restricoes')
-                    st.markdown(f"**Editar restrições operacionais - {nome_reservatorio}**")
-                    restricoes = st.data_editor(restricoes_raw, num_rows="dynamic",
-                                                key=f"restricoes_{nome_reservatorio}")
-                except:
-                    st.info(f"O arquivo de {nome_reservatorio} não contém a aba 'Restricoes'. Ela é opcional.")
+                    curva_av = pd.read_excel(arquivo, sheet_name='CurvaAV')
+                    afluencias_df = pd.read_excel(arquivo, sheet_name='Afluencias')
+                    demandas_df = pd.read_excel(arquivo, sheet_name='Demandas')
+                    evaporacao_df = pd.read_excel(arquivo, sheet_name='Evaporacao')
 
-                volume_inicial = st.number_input(f"Volume inicial - {nome_reservatorio} (hm³)", min_value=0.0, value=float(curva_av['Volume (hm³)'].min()))
+                    if not all(col in afluencias_df.columns for col in ['Afluência (hm³)']) or \
+                       not all(col in demandas_df.columns for col in ['Demanda (hm³)']) or \
+                       not all(col in evaporacao_df.columns for col in ['Evaporação (mm)']):
+                        st.error(f"{nome_reservatorio}: Nomes de colunas incorretos.")
+                        continue
 
-                if st.button(f"Simular - {nome_reservatorio}"):
-                    resultados = simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes)
-                    display_results(nome_reservatorio, resultados)
+                    if len(afluencias_df) != len(demandas_df) or len(demandas_df) != len(evaporacao_df):
+                        st.error(f"{nome_reservatorio}: Séries com comprimentos diferentes.")
+                        continue
 
-            except Exception as e:
-                st.error(f"Erro ao processar {nome_reservatorio}: {e}")
+                    if afluencias_df.isnull().values.any() or demandas_df.isnull().values.any() or evaporacao_df.isnull().values.any():
+                        st.error(f"{nome_reservatorio}: Há valores nulos nas séries.")
+                        continue
+
+                    afluencias = afluencias_df['Afluência (hm³)'].astype(float).values
+                    demandas = demandas_df['Demanda (hm³)'].astype(float).values
+                    evaporacao_mm = evaporacao_df['Evaporação (mm)'].astype(float).values
+
+                    restricoes = None
+                    try:
+                        restricoes_raw = pd.read_excel(arquivo, sheet_name='Restricoes')
+                        st.markdown(f"**Editar restrições operacionais - {nome_reservatorio}**")
+                        restricoes = st.data_editor(restricoes_raw, num_rows="dynamic", key=f"restricoes_{nome_reservatorio}")
+                    except:
+                        st.info(f"{nome_reservatorio}: Sem aba 'Restricoes'.")
+
+                    volume_inicial = st.number_input(
+                        f"Volume inicial - {nome_reservatorio} (hm³)",
+                        min_value=0.0,
+                        value=float(curva_av['Volume (hm³)'].min()),
+                        key=f"volini_{nome_reservatorio}"
+                    )
+
+                    dados_reservatorios[nome_reservatorio] = {
+                        "curva_av": curva_av,
+                        "afluencias": afluencias,
+                        "demandas": demandas,
+                        "evaporacao_mm": evaporacao_mm,
+                        "restricoes": restricoes,
+                        "volume_inicial": volume_inicial
+                    }
+
+                except Exception as e:
+                    st.error(f"Erro ao processar {nome_reservatorio}: {e}")
+
+            if st.button("▶️ Executar simulações"):
+                st.session_state.resultados = {}
+                for nome, dados in dados_reservatorios.items():
+                    resultado = simular_reservatorio(
+                        dados["volume_inicial"],
+                        dados["curva_av"],
+                        dados["afluencias"],
+                        dados["demandas"],
+                        dados["evaporacao_mm"],
+                        dados["restricoes"]
+                    )
+                    st.session_state.resultados[nome] = resultado
+                st.success("Simulações concluídas! Vá para a aba '📊 Resultados'.")
+
+    with aba_resultados:
+        if "resultados" in st.session_state and st.session_state.resultados:
+            tabs = st.tabs(list(st.session_state.resultados.keys()))
+            for tab, nome_reservatorio in zip(tabs, st.session_state.resultados.keys()):
+                with tab:
+                    display_results(nome_reservatorio, st.session_state.resultados[nome_reservatorio])
+        else:
+            st.info("Nenhuma simulação foi executada ainda. Carregue os dados e clique em 'Executar simulações' na aba anterior.")
 
 main()

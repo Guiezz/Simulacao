@@ -5,3 +5,4 @@ matplotlib
 openpyxl
 
 plotly~=6.0.1
+reportlab~=4.4.1

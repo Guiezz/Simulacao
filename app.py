@@ -6,15 +6,17 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from io import BytesIO
 
+
 # Carrega dados do Excel fixo
 @st.cache_data
-
 def carregar_dados():
     caminho = "testeAcudes.xlsx"
     cav = pd.read_excel(caminho, sheet_name="cav")
     evaporacao = pd.read_excel(caminho, sheet_name="evaporacao")
     acudes = pd.read_excel(caminho, sheet_name="acudes")
-    return cav, evaporacao, acudes
+    vazoes = pd.read_excel(caminho, sheet_name="vazoes")  # Nova aba de vazões
+    return cav, evaporacao, acudes, vazoes
+
 
 def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None):
     curva_av['volume'] = pd.to_numeric(curva_av['volume'], errors='coerce')
@@ -50,7 +52,8 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
 
     for t in range(n_meses):
         v_ant = volumes[t]
-        a = polinomio_area(v_ant) * 1e6  # Usa o polinômio calculado        a = max(a, 0)
+        a = polinomio_area(v_ant) * 1e6  # converte km² para m²
+        a = max(a, 0)
         evap_m = evaporacao_mm[t] / 1000  # mm -> m
         evap_volume = (a * evap_m) / 1e6  # m³ -> hm³
 
@@ -110,6 +113,7 @@ def gerar_relatorio_pdf(nome_reservatorio, resultados):
     buffer.seek(0)
     return buffer
 
+
 def display_results(nome_reservatorio, resultados):
     st.subheader(f"Resultados - {nome_reservatorio}")
     meses = np.arange(1, len(resultados['volumes']) + 1)
@@ -156,30 +160,123 @@ def display_results(nome_reservatorio, resultados):
         mime='application/pdf'
     )
 
+
+def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
+    st.subheader(f"📊 Dados Históricos de Vazão - {nome_acude}")
+
+    # Filtrar dados para o açude específico
+    dados_vazao = vazoes[vazoes['COD'] == cod_acude]
+
+    if dados_vazao.empty:
+        st.warning(f"Não foram encontrados dados de vazão para o açude {nome_acude}")
+        return
+
+    # Selecionar ano para visualização
+    anos_disponiveis = dados_vazao['ANO'].unique()
+    ano_selecionado = st.selectbox("Selecione o ano para visualizar:", anos_disponiveis)
+
+    # Filtrar dados para o ano selecionado
+    dados_ano = dados_vazao[dados_vazao['ANO'] == ano_selecionado]
+
+    if dados_ano.empty:
+        st.warning(f"Não há dados para o ano {ano_selecionado}")
+        return
+
+    # Preparar dados para visualização
+    meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
+    valores = dados_ano[meses].values[0]
+
+    # Criar gráfico
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=meses, y=valores, name='Vazão (hm³)'))
+
+    fig.update_layout(
+        title=f'Vazão Mensal - {nome_acude} ({ano_selecionado})',
+        xaxis_title='Mês',
+        yaxis_title='Vazão (hm³)',
+        template='plotly_white'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Mostrar tabela de dados
+    st.write(f"Valores detalhados para {ano_selecionado}:")
+    dados_tabela = pd.DataFrame({
+        'Mês': meses,
+        'Vazão (hm³)': valores
+    })
+    st.dataframe(dados_tabela)
+
+    # Opção para download
+    csv = dados_tabela.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Baixar dados de vazão",
+        data=csv,
+        file_name=f'vazao_{nome_acude}_{ano_selecionado}.csv',
+        mime='text/csv'
+    )
+
+
 def main():
     st.title("💧 Simulador de Reservatórios - Dados Fixos")
-    cav, evaporacao, acudes = carregar_dados()
+    cav, evaporacao, acudes, vazoes = carregar_dados()
 
     nomes_acudes = acudes['CORPO'].tolist()
     nome_escolhido = st.selectbox("Selecione um açude para simular:", nomes_acudes)
 
-    dados_acude = acudes[acudes['CORPO'] == nome_escolhido].iloc[0]
-    cod_acude = dados_acude['COD']
-    est_evap = dados_acude['Est. Evap.']
-    volume_inicial = dados_acude['CAPAC (m³)'] / 1e6  # m3 para hm3
+    # Criando abas para separação de funcionalidades
+    tab1, tab2 = st.tabs(["📊 Simulação", "📚 Dados Históricos"])
 
-    curva_av = cav[cav['COD'] == cod_acude][['COTA', 'area', 'volume']]
-    curva_av = curva_av.rename(columns={'area': 'area', 'volume': 'volume'})
+    with tab1:
+        st.header("Simulação de Reservatório")
+        dados_acude = acudes[acudes['CORPO'] == nome_escolhido].iloc[0]
+        cod_acude = dados_acude['COD']
+        est_evap = dados_acude['Est. Evap.']
+        volume_inicial = dados_acude['CAPAC (m³)'] / 1e6  # m3 para hm3
 
-    evaporacao_est = evaporacao[evaporacao['COD'] == est_evap]
-    evaporacao_mm = evaporacao_est.iloc[0][['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ']].values.astype(float)
+        curva_av = cav[cav['COD'] == cod_acude][['COTA', 'area', 'volume']]
+        curva_av = curva_av.rename(columns={'area': 'area', 'volume': 'volume'})
 
-    meses = len(evaporacao_mm)
-    afluencias = st.number_input("Afluência mensal (hm³)", value=1.0, step=0.1) * np.ones(meses)
-    demandas = st.number_input("Demanda mensal (hm³)", value=1.0, step=0.1) * np.ones(meses)
+        evaporacao_est = evaporacao[evaporacao['COD'] == est_evap]
+        evaporacao_mm = evaporacao_est.iloc[0][
+            ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']].values.astype(float)
 
-    if st.button("▶️ Executar simulação"):
-        resultados = simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm)
-        display_results(nome_escolhido, resultados)
+        meses = len(evaporacao_mm)
+
+        st.subheader("⚙️ Parâmetros de Simulação")
+        opcao_vazao = st.radio("Tipo de entrada de vazão:",
+                               ["Valor Constante", "Dados Históricos"])
+
+        if opcao_vazao == "Valor Constante":
+            afluencias = st.number_input("Afluência mensal (hm³)", value=1.0, step=0.1) * np.ones(meses)
+            demandas = st.number_input("Demanda mensal (hm³)", value=1.0, step=0.1) * np.ones(meses)
+        else:
+            dados_vazao_acude = vazoes[vazoes['COD'] == cod_acude]
+            if dados_vazao_acude.empty:
+                st.warning("Não há dados históricos de vazão para este açude. Usando valor constante.")
+                afluencias = st.number_input("Afluência mensal (hm³)", value=1.0, step=0.1) * np.ones(meses)
+                demandas = st.number_input("Demanda mensal (hm³)", value=1.0, step=0.1) * np.ones(meses)
+            else:
+                anos_disponiveis = dados_vazao_acude['ANO'].unique()
+                ano_selecionado = st.selectbox("Selecione o ano para usar dados de vazão:", anos_disponiveis)
+                dados_ano = dados_vazao_acude[dados_vazao_acude['ANO'] == ano_selecionado]
+                afluencias = \
+                dados_ano[['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']].values[
+                    0]
+                st.info(f"Usando dados de vazão de {ano_selecionado}")
+                demanda_constante = st.number_input("Demanda mensal constante (hm³)", value=1.0, step=0.1)
+                demandas = demanda_constante * np.ones(meses)
+
+        if st.button("▶️ Executar simulação", key="simulate_button"):
+            resultados = simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm)
+            display_results(nome_escolhido, resultados)
+
+    with tab2:
+        st.header("Dados Históricos de Vazão")
+        if 'dados_acude' in locals():
+            mostrar_dados_vazao(vazoes, cod_acude, nome_escolhido)
+        else:
+            st.info("Selecione um açude na aba de Simulação primeiro")
+
 
 main()

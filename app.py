@@ -7,14 +7,13 @@ from reportlab.pdfgen import canvas
 from io import BytesIO
 
 
-# Carrega dados do Excel fixo
 @st.cache_data
 def carregar_dados():
     caminho = "testeAcudes.xlsx"
     cav = pd.read_excel(caminho, sheet_name="cav")
     evaporacao = pd.read_excel(caminho, sheet_name="evaporacao")
     acudes = pd.read_excel(caminho, sheet_name="acudes")
-    vazoes = pd.read_excel(caminho, sheet_name="vazoes")  # Nova aba de vazões
+    vazoes = pd.read_excel(caminho, sheet_name="vazoes")
     return cav, evaporacao, acudes, vazoes
 
 
@@ -164,29 +163,24 @@ def display_results(nome_reservatorio, resultados):
 def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
     st.subheader(f"📊 Dados Históricos de Vazão - {nome_acude}")
 
-    # Filtrar dados para o açude específico
     dados_vazao = vazoes[vazoes['COD'] == cod_acude]
 
     if dados_vazao.empty:
         st.warning(f"Não foram encontrados dados de vazão para o açude {nome_acude}")
         return
 
-    # Selecionar ano para visualização
     anos_disponiveis = dados_vazao['ANO'].unique()
     ano_selecionado = st.selectbox("Selecione o ano para visualizar:", anos_disponiveis)
 
-    # Filtrar dados para o ano selecionado
     dados_ano = dados_vazao[dados_vazao['ANO'] == ano_selecionado]
 
     if dados_ano.empty:
         st.warning(f"Não há dados para o ano {ano_selecionado}")
         return
 
-    # Preparar dados para visualização
     meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
     valores = dados_ano[meses].values[0]
 
-    # Criar gráfico
     fig = go.Figure()
     fig.add_trace(go.Bar(x=meses, y=valores, name='Vazão (hm³)'))
 
@@ -199,7 +193,6 @@ def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Mostrar tabela de dados
     st.write(f"Valores detalhados para {ano_selecionado}:")
     dados_tabela = pd.DataFrame({
         'Mês': meses,
@@ -207,7 +200,6 @@ def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
     })
     st.dataframe(dados_tabela)
 
-    # Opção para download
     csv = dados_tabela.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Baixar dados de vazão",
@@ -224,7 +216,6 @@ def main():
     nomes_acudes = acudes['CORPO'].tolist()
     nome_escolhido = st.selectbox("Selecione um açude para simular:", nomes_acudes)
 
-    # Criando abas para separação de funcionalidades
     tab1, tab2 = st.tabs(["📊 Simulação", "📚 Dados Históricos"])
 
     with tab1:

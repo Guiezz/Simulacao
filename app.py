@@ -210,7 +210,7 @@ def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
 
 
 def main():
-    st.title("💧 Simulador de Reservatórios - Dados Fixos")
+    st.title("💧 Simulador de Reservatórios")
     cav, evaporacao, acudes, vazoes = carregar_dados()
 
     nomes_acudes = acudes['CORPO'].tolist()

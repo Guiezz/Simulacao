@@ -17,7 +17,13 @@ def carregar_dados():
     return cav, evaporacao, acudes, vazoes
 
 
+# Esta função realiza a simulação mensal do balanço hídrico do reservatório, considerando:
+# - Volume inicial
+# - Curva cota-área-volume (curva_av)
+# - Séries de afluência, demanda e evaporação
+# - Restrições operacionais: volume máximo, mínimo operacional e volume morto (se fornecidas)
 def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None):
+    # Tratamento da curva para garantir que volume e área são numéricos e não nulos
     curva_av['volume'] = pd.to_numeric(curva_av['volume'], errors='coerce')
     curva_av['area'] = pd.to_numeric(curva_av['area'], errors='coerce')
     curva_av = curva_av.dropna(subset=['volume', 'area'])
@@ -25,13 +31,16 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
     vol = curva_av['volume'].values
     area = curva_av['area'].values
 
+    # Ajusta um polinômio para estimar área em função do volume
     coef_polinomio = np.polyfit(vol, area, deg=3)
     polinomio_area = np.poly1d(coef_polinomio)
 
+    # Valores padrão de restrições
     volume_max = np.inf
     volume_min_oper = 0
     volume_morto = 0
 
+    # Se houver DataFrame de restrições, atualiza os valores com base nele
     if restricoes is not None:
         try:
             restricoes_dict = restricoes.set_index('Parâmetro')['Valor (hm³)'].to_dict()
@@ -39,62 +48,62 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
             volume_min_oper = restricoes_dict.get('Volume Mínimo Operacional', volume_min_oper)
             volume_morto = restricoes_dict.get('Volume Morto', volume_morto)
         except Exception as e:
-            st.warning(f"Erro ao ler restrições operacionais: {e}") # Descomente se usar Streamlit
-            print(f"Erro ao ler restrições operacionais: {e}")
+            st.warning(f"Erro ao ler restrições operacionais: {e}")
 
     n_meses = len(afluencias)
-    volumes = np.zeros(n_meses + 1)
-    evap_hm3 = np.zeros(n_meses)
-    retiradas = np.zeros(n_meses)
-    vertimentos = np.zeros(n_meses)  # NOVO: Array para armazenar o vertimento
-    alertas = []
+    volumes = np.zeros(n_meses + 1)  # Armazena volume no início de cada mês
+    evap_hm3 = np.zeros(n_meses)  # Armazena perdas por evaporação
+    retiradas = np.zeros(n_meses)  # Armazena retiradas reais
+    vertimentos = np.zeros(n_meses)  # Armazena volumes vertidos (excedentes)
+    alertas = []  # Lista de mensagens de alerta
 
     volumes[0] = volume_inicial
 
     for t in range(n_meses):
         v_ant = volumes[t]
-        a = polinomio_area(v_ant) * 1e6  # km² para m²
+        a = polinomio_area(v_ant) * 1e6  # Convertendo km² para m²
         a = max(a, 0)
-        evap_m = evaporacao_mm[t] / 1000  # mm -> m
-        evap_volume = (a * evap_m) / 1e6  # m³ -> hm³
+        evap_m = evaporacao_mm[t] / 1000  # mm para m
+        evap_volume = (a * evap_m) / 1e6  # m³ para hm³
 
-        demanda_hm3 = (demandas[t] * 30 * 24 * 60 * 60) / 1e6  # m³/s -> hm³/mês
-        afluencia_hm3 = (afluencias[t] * 30 * 24 * 60 * 60) / 1e6  # m³/s -> hm³/mês
+        # Afluencias e demandas já devem estar em hm³/mês
+        # Não é mais necessário fazer a conversão aqui
+        demanda_hm3_real = demandas[t]
+        afluencia_hm3_real = afluencias[t]
 
-        # A retirada deve considerar o balanço hídrico para não retirar mais do que o disponível
-        retirada = min(demanda_hm3, max(0, v_ant + afluencia_hm3 - evap_volume - volume_morto))
+        # Define quanto pode ser retirado com base no saldo hídrico e volume morto
+        retirada = min(demanda_hm3_real, max(0, v_ant + afluencia_hm3_real - evap_volume - volume_morto))
 
-        # 1. Calcular o volume potencial antes de considerar o vertimento
-        v_potencial = v_ant + afluencia_hm3 - evap_volume - retirada
-        v_potencial = max(v_potencial, 0)  # Garante que o volume não seja negativo
+        # Volume potencial antes de considerar vertimento
+        v_potencial = v_ant + afluencia_hm3_real - evap_volume - retirada
+        v_potencial = max(v_potencial, 0)
 
-        # 2. Calcular o vertimento
+        # Cálculo do vertimento (excesso de água acima do volume máximo permitido)
         vertimento_t = max(0, v_potencial - volume_max)
         vertimentos[t] = vertimento_t
 
-        # 3. Calcular o volume atual final, já subtraindo o vertimento
+        # Volume final após possível vertimento
         v_atual = v_potencial - vertimento_t
-        # A linha acima é equivalente a: v_atual = min(v_potencial, volume_max)
 
-        # Checagem de alertas
+        # Alertas para volumes abaixo de limites operacionais
         if v_atual < volume_min_oper:
             alertas.append(f"Mês {t + 1}: volume ({v_atual:.2f} hm³) abaixo do mínimo operacional.")
         if v_atual < volume_morto:
             alertas.append(f"Mês {t + 1}: volume ({v_atual:.2f} hm³) abaixo do volume morto.")
 
-        # Armazenar resultados do passo de tempo
+        # Armazena os resultados do mês
         evap_hm3[t] = evap_volume
         volumes[t + 1] = v_atual
         retiradas[t] = retirada
 
-    # 4. Adicionar o vertimento ao dicionário de retorno
     return {
         'volumes': volumes[1:],
         'retiradas': retiradas,
         'evaporacao': evap_hm3,
-        'vertimento': vertimentos,  # NOVO: Retorna a série de vertimentos
-        'alertas':alertas
-        }
+        'vertimento': vertimentos,
+        'alertas': alertas
+    }
+
 
 def gerar_relatorio_pdf(nome_reservatorio, resultados):
     buffer = BytesIO()
@@ -140,6 +149,8 @@ def display_results(nome_reservatorio, resultados):
                              line=dict(dash='dash')))
     fig.add_trace(go.Scatter(x=meses, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)',
                              line=dict(dash='dot')))
+    fig.add_trace(go.Scatter(x=meses, y=resultados['vertimento'], mode='lines+markers', name='Vertimento (hm³)',
+                             line=dict(dash='dashdot')))  # NOVO
 
     fig.update_layout(
         title=f'Simulação do Reservatório - {nome_reservatorio}',
@@ -156,7 +167,8 @@ def display_results(nome_reservatorio, resultados):
         'Mês': meses,
         'Volume (hm³)': resultados['volumes'],
         'Retirada (hm³)': resultados['retiradas'],
-        'Evaporação (hm³)': resultados['evaporacao']
+        'Evaporação (hm³)': resultados['evaporacao'],
+        'Vertimento (hm³)': resultados['vertimento']  # NOVO
     })
     st.dataframe(df_resultados)
 
@@ -200,15 +212,30 @@ def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
 
     df_vazao_mes = pd.DataFrame(datas_expandidas).sort_values('DATA')
 
-    data_inicio = st.date_input("Data de início", value=df_vazao_mes['DATA'].min())
-    data_fim = st.date_input("Data de fim", value=df_vazao_mes['DATA'].max())
+    # Lista de anos válidos
+    anos_validos = sorted([ano for ano in df_vazao_mes['DATA'].dt.year.unique() if ano != 1910])
+    col_meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
+    meses_dict = {nome: idx for idx, nome in enumerate(col_meses)}  # para montar datas
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        ano_inicio = st.selectbox("Ano inicial:", anos_validos, index=0, key="ano_inicio_hist")
+        mes_inicio = st.selectbox("Mês inicial:", col_meses, index=0, key="mes_inicio_hist")
+    with col2:
+        ano_fim = st.selectbox("Ano final:", anos_validos, index=len(anos_validos) - 1, key="ano_fim_hist")
+        mes_fim = st.selectbox("Mês final:", col_meses, index=11, key="mes_fim_hist")
+
+    # Constrói intervalo de datas com base nas seleções
+    data_inicio = pd.Timestamp(year=ano_inicio, month=meses_dict[mes_inicio] + 1, day=1)
+    data_fim = pd.Timestamp(year=ano_fim, month=meses_dict[mes_fim] + 1, day=1)
 
     if data_inicio > data_fim:
         st.warning("A data de início deve ser anterior à data de fim.")
         return
 
-    df_filtrado = df_vazao_mes[(df_vazao_mes['DATA'] >= pd.Timestamp(data_inicio)) &
-                               (df_vazao_mes['DATA'] <= pd.Timestamp(data_fim))]
+    df_filtrado = df_vazao_mes[(df_vazao_mes['DATA'] >= data_inicio) &
+                               (df_vazao_mes['DATA'] <= data_fim)]
 
     if df_filtrado.empty:
         st.warning("Não há dados para o intervalo selecionado.")
@@ -247,17 +274,12 @@ def main():
 
     tab1, tab2 = st.tabs(["📊 Simulação", "📚 Dados Históricos"])
 
-    def converter_m3s_para_hm3mes(valor_m3s):
-        segundos_por_mes = 30.44 * 24 * 60 * 60
-        return (valor_m3s * segundos_por_mes) / 1e6
-
     with tab1:
         st.header("Simulação de Reservatório")
         dados_acude = acudes[acudes['CORPO'] == nome_escolhido].iloc[0]
         cod_acude = dados_acude['COD']
         est_evap = dados_acude['Est. Evap.']
         volume_inicial = dados_acude['CAPAC (m³)'] / 1e6
-
 
         curva_av = cav[cav['COD'] == cod_acude][['COTA', 'area', 'volume']]
         curva_av = curva_av.rename(columns={'area': 'area', 'volume': 'volume'})
@@ -272,27 +294,57 @@ def main():
 
         meses = 12  # padrão, caso valor constante
 
+        def converter_m3s_para_hm3mes(m3s):
+            segundos_por_mes = 30.44 * 24 * 60 * 60
+            return (m3s * segundos_por_mes) / 1e6
+
         if opcao_vazao == "Valor Constante":
-            meses = st.number_input("Número de meses a simular", min_value=1, max_value=120, value=12, step=1)
-            afluencia_m3s = st.number_input("Afluência constante (m³/s)", value=1.0, step=0.1)
-            demanda_m3s = st.number_input("Demanda constante (m³/s)", value=1.0, step=0.1)
-            fator_conv = 2.628e-6  # m³/s para hm³/mês
-            afluencias = afluencia_m3s * fator_conv * np.ones(meses)
-            demandas = demanda_m3s * fator_conv * np.ones(meses)
+            st.markdown("### 🔧 Parâmetros para entrada constante")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                meses = st.number_input("Número de meses a simular:", min_value=1, max_value=120, value=12, step=1)
+            with col2:
+                demanda_m3s = st.number_input("Retirada mensal constante (m³/s):", value=1.0, step=0.1)
+
+            demanda_hm3mes = converter_m3s_para_hm3mes(demanda_m3s)
+            demandas = np.full(meses, demanda_hm3mes)
+
+            st.markdown("#### 📥 Informe os valores de afluência para cada mês (em **hm³/mês**)")
+
+            afluencias = []
+            cols = st.columns(4)
+            for i in range(meses):
+                col = cols[i % 4]
+                with col:
+                    val = st.number_input(f"Mês {i + 1}", key=f"afl_mes_{i}", min_value=0.0, value=1.0, step=0.1,
+                                          format="%.2f")
+                    afluencias.append(val)
+
+            afluencias = np.array(afluencias)  # Este array já está em hm³/mês se o usuário inseriu assim
+            # Se o usuário inserir em m³/s e quiser que seja convertido, precisaria de outro input
+            # Por enquanto, assumimos que o input é hm³/mês para afluências constantes.
+            # Se afluencias for para ser m³/s e convertido, a linha abaixo seria necessária:
+            # afluencias = np.array([converter_m3s_para_hm3mes(val) for val in afluencias])
+
             evaporacao_mm = np.resize(evaporacao_mm, meses)
-        else:
+
+
+        else:  # Opção: Dados Históricos
             dados_vazao_acude = vazoes[vazoes['COD'] == cod_acude]
             if dados_vazao_acude.empty:
                 st.warning("Não há dados históricos de vazão para este açude. Usando valor constante.")
                 meses = 12
-                afluencia_m3s = st.number_input("Afluência constante (m³/s)", value=1.0, step=0.1)
-                demanda_m3s = st.number_input("Demanda constante (m³/s)", value=1.0, step=0.1)
-                fator_conv = 2.628e-6
-                afluencias = afluencia_m3s * fator_conv * np.ones(meses)
-                demandas = demanda_m3s * fator_conv * np.ones(meses)
+                # Afluência e demanda em m³/s, convertidas para hm³/mês
+                afluencia_m3s_default = st.number_input("Afluência constante (m³/s)", value=1.0, step=0.1)
+                demanda_m3s_default = st.number_input("Demanda constante (m³/s)", value=1.0, step=0.1)
+
+                afluencias = np.full(meses, converter_m3s_para_hm3mes(afluencia_m3s_default))
+                demandas = np.full(meses, converter_m3s_para_hm3mes(demanda_m3s_default))
+
                 evaporacao_mm = np.resize(evaporacao_mm, meses)
             else:
-                anos_disponiveis = sorted(dados_vazao_acude['ANO'].unique())
+                anos_disponiveis = sorted([ano for ano in dados_vazao_acude['ANO'].unique() if ano != 1910])
                 col_meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
                 meses_dict = {nome: idx for idx, nome in enumerate(col_meses)}
 
@@ -304,38 +356,119 @@ def main():
                     ano_fim = st.selectbox("Ano final:", anos_disponiveis, index=len(anos_disponiveis) - 1)
                     mes_fim = st.selectbox("Mês final:", col_meses, index=11)
 
-                # Construir vetor de afluência
-                data_inicio = pd.Timestamp(year=ano_inicio, month=meses_dict[mes_inicio]+1, day=1)
-                data_fim = pd.Timestamp(year=ano_fim, month=meses_dict[mes_fim]+1, day=1)
+                # Construir vetor de afluência (em m³/s inicialmente)
+                data_inicio = pd.Timestamp(year=ano_inicio, month=meses_dict[mes_inicio] + 1, day=1)
+                data_fim = pd.Timestamp(year=ano_fim, month=meses_dict[mes_fim] + 1, day=1)
                 datas_simulacao = pd.date_range(start=data_inicio, end=data_fim, freq='MS')
 
-                afluencias = []
+                afluencias_m3s = []  # Temporariamente em m³/s
                 for data in datas_simulacao:
                     linha = dados_vazao_acude[dados_vazao_acude['ANO'] == data.year]
                     if not linha.empty:
                         val = linha.iloc[0][col_meses[data.month - 1]]
-                        afluencias.append(val)
+                        afluencias_m3s.append(val)
                     else:
-                        afluencias.append(0.0)  # ou usar np.nan e depois interpolar
+                        afluencias_m3s.append(0.0)
+
+                # CONVERTER AFLUENCIAS DE m³/s PARA hm³/mês AQUI
+                afluencias = np.array([converter_m3s_para_hm3mes(val) for val in afluencias_m3s])
 
                 meses = len(afluencias)
-                demanda_m3s = st.number_input("Demanda constante (m³/s)", value=1.0, step=0.1)
-                fator_conv = 2.628e-6
-                demandas = demanda_m3s * fator_conv * np.ones(meses)
+                demanda_m3s = st.number_input("Retirada mensal constante (m³/s):", value=1.0, step=0.1)
+
+                # CONVERTER DEMANDA DE m³/s PARA hm³/mês AQUI
+                demanda_hm3mes = converter_m3s_para_hm3mes(demanda_m3s)
+                demandas = np.full(meses, demanda_hm3mes)
 
                 evaporacao_mm = np.resize(evaporacao_mm, meses)
 
                 st.info(f"Simulando de {mes_inicio}/{ano_inicio} até {mes_fim}/{ano_fim} ({meses} meses).")
 
         if st.button("▶️ Executar simulação", key="simulate_button"):
-            resultados = simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm)
+            # Extrai volume máximo diretamente da capacidade do açude em m³ e converte para hm³
+            volume_maximo_hm3 = dados_acude['CAPAC (m³)'] / 1e6
+
+            # Cria DataFrame de restrições contendo o volume máximo
+            restricoes_df = pd.DataFrame({
+                'Parâmetro': ['Volume Máximo'],
+                'Valor (hm³)': [volume_maximo_hm3]
+            })
+
+            # Executa simulação com restrições
+            resultados = simular_reservatorio(
+                volume_inicial, curva_av, afluencias, demandas, evaporacao_mm,
+                restricoes=restricoes_df
+            )
             display_results(nome_escolhido, resultados)
 
     with tab2:
-        st.header("Dados Históricos de Vazão")
+        st.header("Dados Históricos de Vazão e Evaporação")
+
+        def expandir_serie_mensal(df, colunas_mensais, ano_col='ANO', valor_col='Valor', nome_variavel='Valor'):
+            datas = []
+            valores = []
+            for _, row in df.iterrows():
+                ano = int(row[ano_col])
+                for idx, mes_nome in enumerate(colunas_mensais, start=1):
+                    try:
+                        valor = float(row[mes_nome])
+                        data = pd.Timestamp(year=ano, month=idx, day=1)
+                        datas.append(data)
+                        valores.append(valor)
+                    except:
+                        continue
+            return pd.DataFrame({'DATA': datas, nome_variavel: valores})
+
         if 'dados_acude' in locals():
             mostrar_dados_vazao(vazoes, cod_acude, nome_escolhido)
+
+            # --- NOVO BLOCO: EVAPORAÇÃO MENSAL MÉDIA ---
+            st.subheader(f"🌤️ Evaporação Mensal Média - Estação {est_evap}")
+
+            col_meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN',
+                         'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
+
+            # Filtra a linha correspondente à estação selecionada
+            evaporacao_est = evaporacao[evaporacao['COD'] == est_evap]
+
+            if evaporacao_est.empty:
+                st.warning("Não há dados de evaporação para esta estação.")
+            else:
+                # Pega apenas a primeira linha e converte os valores mensais
+                valores = evaporacao_est.iloc[0][col_meses].astype(float).values
+                df_evap = pd.DataFrame({
+                    'Mês': col_meses,
+                    'Evaporação (mm)': valores
+                })
+
+                # Gráfico
+                fig_evap = go.Figure()
+                fig_evap.add_trace(go.Scatter(
+                    x=df_evap['Mês'],
+                    y=df_evap['Evaporação (mm)'],
+                    mode='lines+markers',
+                    name='Evaporação (mm)'
+                ))
+                fig_evap.update_layout(
+                    title=f'Evaporação Mensal Média - Estação {est_evap}',
+                    xaxis_title='Mês',
+                    yaxis_title='Evaporação (mm)',
+                    template='plotly_white'
+                )
+
+                st.plotly_chart(fig_evap, use_container_width=True)
+                st.dataframe(df_evap)
+
+                csv_evap = df_evap.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Baixar dados de evaporação",
+                    data=csv_evap,
+                    file_name=f'evaporacao_media_{est_evap}.csv',
+                    mime='text/csv'
+                )
+
         else:
-            st.info("Selecione um açude na aba de Simulação primeiro")
+            st.info("Selecione um açude na aba de Simulação primeiro.")
+
 
 main()

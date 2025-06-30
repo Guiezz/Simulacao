@@ -139,22 +139,26 @@ def gerar_relatorio_pdf(nome_reservatorio, resultados):
     return buffer
 
 
-def display_results(nome_reservatorio, resultados):
+def display_results(nome_reservatorio, resultados, datas_simulacao=None):
     st.subheader(f"Resultados - {nome_reservatorio}")
-    meses = np.arange(1, len(resultados['volumes']) + 1)
+
+    if datas_simulacao is not None:
+        eixo_x = datas_simulacao
+    else:
+        eixo_x = np.arange(1, len(resultados['volumes']) + 1)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=meses, y=resultados['volumes'], mode='lines+markers', name='Volume (hm³)'))
-    fig.add_trace(go.Scatter(x=meses, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)',
+    fig.add_trace(go.Scatter(x=eixo_x, y=resultados['volumes'], mode='lines+markers', name='Volume (hm³)'))
+    fig.add_trace(go.Scatter(x=eixo_x, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)',
                              line=dict(dash='dash')))
-    fig.add_trace(go.Scatter(x=meses, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)',
+    fig.add_trace(go.Scatter(x=eixo_x, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)',
                              line=dict(dash='dot')))
-    fig.add_trace(go.Scatter(x=meses, y=resultados['vertimento'], mode='lines+markers', name='Vertimento (hm³)',
-                             line=dict(dash='dashdot')))  # NOVO
+    fig.add_trace(go.Scatter(x=eixo_x, y=resultados['vertimento'], mode='lines+markers', name='Vertimento (hm³)',
+                             line=dict(dash='dashdot')))
 
     fig.update_layout(
         title=f'Simulação do Reservatório - {nome_reservatorio}',
-        xaxis_title='Mês',
+        xaxis_title='Mês' if datas_simulacao is None else 'Data',
         yaxis_title='Volume (hm³)',
         legend_title='Variáveis',
         hovermode='x unified',
@@ -163,13 +167,22 @@ def display_results(nome_reservatorio, resultados):
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # Formata a coluna de data para string (ex: 2022-01)
+    if datas_simulacao is not None:
+        datas_formatadas = [d.strftime("%Y-%m") for d in datas_simulacao]
+        coluna_data = 'Data'
+    else:
+        datas_formatadas = np.arange(1, len(resultados['volumes']) + 1)
+        coluna_data = 'Mês'
+
     df_resultados = pd.DataFrame({
-        'Mês': meses,
+        coluna_data: datas_formatadas,
         'Volume (hm³)': resultados['volumes'],
         'Retirada (hm³)': resultados['retiradas'],
         'Evaporação (hm³)': resultados['evaporacao'],
-        'Vertimento (hm³)': resultados['vertimento']  # NOVO
+        'Vertimento (hm³)': resultados['vertimento']
     })
+
     st.dataframe(df_resultados)
 
     csv = df_resultados.to_csv(index=False).encode('utf-8')
@@ -254,9 +267,13 @@ def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(df_filtrado.rename(columns={'DATA': 'Data', 'VAZAO': 'Vazão (m³/s)'}))
+    df_filtrado_formatado = df_filtrado.copy()
+    df_filtrado_formatado['Data'] = df_filtrado_formatado['DATA'].dt.strftime("%Y-%m")
+    df_filtrado_formatado = df_filtrado_formatado[['Data', 'VAZAO']].rename(columns={'VAZAO': 'Vazão (m³/s)'})
 
-    csv = df_filtrado.to_csv(index=False).encode('utf-8')
+    st.dataframe(df_filtrado_formatado)
+
+    csv = df_filtrado_formatado.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Baixar dados de vazão",
         data=csv,
@@ -399,7 +416,7 @@ def main():
                 volume_inicial, curva_av, afluencias, demandas, evaporacao_mm,
                 restricoes=restricoes_df
             )
-            display_results(nome_escolhido, resultados)
+            display_results(nome_escolhido, resultados, datas_simulacao if opcao_vazao == "Dados Históricos" else None)
 
     with tab2:
         st.header("Dados Históricos de Vazão e Evaporação")

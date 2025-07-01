@@ -97,7 +97,7 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
         retiradas[t] = retirada
 
     return {
-        'volumes': volumes[1:],
+        'volumes': volumes[:-1 ],
         'retiradas': retiradas,
         'evaporacao': evap_hm3,
         'vertimento': vertimentos,

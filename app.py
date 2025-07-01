@@ -426,6 +426,30 @@ def main():
                 restricoes=restricoes_df
             )
             display_results(nome_escolhido, resultados, datas_simulacao if opcao_vazao == "Dados Históricos" else None)
+            # Verifica se algum mês ficou com volume abaixo de 20% da capacidade
+            limite_alerta = 0.1 * capacidade_total_hm3
+            volumes_simulados = resultados['volumes']
+            meses_criticos = np.where(volumes_simulados < limite_alerta)[0]
+
+            if len(meses_criticos) > 0:
+                if opcao_vazao == "Dados Históricos" and 'datas_simulacao' in locals():
+                    meses_criticos_formatados = [
+                        f"📉 {datas_simulacao[i].strftime('%b/%Y')} ({volumes_simulados[i]:.2f} hm³)" for i in
+                        meses_criticos]
+                else:
+                    meses_criticos_formatados = [f"📉 Mês {i + 1} ({volumes_simulados[i]:.2f} hm³)" for i in
+                                                 meses_criticos]
+
+                st.markdown("""
+                <div style="border-left: 6px solid #e74c3c; padding: 1em; border-radius: 5px;">
+                    <h4 style="color: #c0392b;">⚠️ Alerta de Volume Crítico</h4>
+                    <p>O volume do reservatório ficou abaixo de <strong>20% da capacidade</strong> nos seguintes períodos:</p>
+                    <ul style="margin-top: 0.5em;">
+                        {}
+                    </ul>
+                </div>
+                """.format("".join(f"<li>{mes}</li>" for mes in meses_criticos_formatados)),
+                            unsafe_allow_html=True)
 
     with tab2:
         st.header("Dados Históricos de Vazão e Evaporação")

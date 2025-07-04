@@ -167,7 +167,7 @@ def display_results(nome_reservatorio, resultados, datas_simulacao=None):
     fig.add_trace(go.Scatter(x=eixo_x, y=resultados['volumes'], mode='lines+markers', name='Volume Armazenado (hm³)',
                              line=dict(color='royalblue', width=3)))
     fig.add_trace(go.Scatter(x=eixo_x, y=resultados['afluencias'], mode='lines', name='Afluência (hm³)',
-                             line=dict(color='purple', width=2)))
+                             line=dict(color='violet', width=2)))
     fig.add_trace(go.Scatter(x=eixo_x, y=resultados['retiradas'], mode='lines+markers', name='Retirada (hm³)',
                              line=dict(dash='dash', color='green')))
     fig.add_trace(go.Scatter(x=eixo_x, y=resultados['evaporacao'], mode='lines+markers', name='Evaporação (hm³)',

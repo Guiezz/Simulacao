@@ -97,7 +97,7 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
         retiradas[t] = retirada
 
     return {
-        'volumes': volumes[1:],
+        'volumes': volumes[:-1],
         'retiradas': retiradas,
         'evaporacao': evap_hm3,
         'vertimento': vertimentos,
@@ -163,7 +163,6 @@ def display_results(nome_reservatorio, resultados, datas_simulacao=None):
         eixo_x = np.arange(1, len(resultados['volumes']) + 1)
 
     fig = go.Figure()
-
     fig.add_trace(go.Scatter(x=eixo_x, y=resultados['volumes'], mode='lines+markers', name='Volume Armazenado (hm³)',
                              line=dict(color='royalblue', width=3)))
     fig.add_trace(go.Scatter(x=eixo_x, y=resultados['afluencias'], mode='lines', name='Afluência (hm³)',
@@ -202,7 +201,7 @@ def display_results(nome_reservatorio, resultados, datas_simulacao=None):
         'Vertimento (hm³)': resultados['vertimento']
     })
 
-    cols_to_round = ['Afluência (hm³)', 'Volume Armazenado (hm³)', 'Retirada (hm³)', 'Evaporação (hm³)',
+    cols_to_round = ['Volume Armazenado (hm³)', 'Afluência (hm³)', 'Retirada (hm³)', 'Evaporação (hm³)',
                      'Vertimento (hm³)']
     for col in cols_to_round:
         df_resultados[col] = df_resultados[col].round(2)
@@ -298,7 +297,7 @@ def mostrar_dados_vazao(vazoes, cod_acude, nome_acude):
     st.download_button(
         label="📥 Baixar dados de vazão",
         data=csv,
-        file_name=f'vazao_{nome_acude}_{data_inicio.strftime("%Y%m")}_{data_fim.strftime("%Y%m")}.csv',
+        file_name=f'vazao_{nome_acude}{data_inicio.strftime("%Y%m")}{data_fim.strftime("%Y%m")}.csv',
         mime='text/csv'
     )
 
@@ -349,7 +348,7 @@ def main():
 
         st.subheader("⚙️ Parâmetros de Simulação")
 
-        opcao_vazao = st.radio("Tipo de entrada de vazão:", ["Valor Constante", "Dados Históricos"])
+        opcao_vazao = "Dados Históricos"
 
         meses = 12
         datas_simulacao = None
@@ -359,96 +358,56 @@ def main():
             segundos_por_mes = 30.44 * 24 * 60 * 60
             return (m3s * segundos_por_mes) / 1e6
 
-        if opcao_vazao == "Valor Constante":
-            with st.expander("🔧 Parâmetros para entrada de valores"):
-                meses = st.number_input("Número de meses a simular:", min_value=1, max_value=120, value=12, step=1)
+        dados_vazao_acude = vazoes[vazoes['COD'] == cod_acude]
+        if dados_vazao_acude.empty:
+            st.warning(
+                "Não há dados históricos de vazão para este açude. A simulação com dados históricos não é possível.")
+            st.stop()
+        else:
+            anos_disponiveis = sorted([ano for ano in dados_vazao_acude['ANO'].unique() if ano != 1910])
+            col_meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
+            meses_dict = {nome: idx for idx, nome in enumerate(col_meses)}
 
-                # --- INÍCIO DA ALTERAÇÃO: Demanda mensal para "Valor Constante" ---
-                st.markdown("#### 🔧 Defina as retiradas (demandas) mensais em m³/s")
-                st.caption("Estes valores se repetirão anualmente durante o período simulado.")
+            with st.expander("📅 Selecione o intervalo de dados históricos para AFLUÊNCIA"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    ano_inicio = st.selectbox("Ano inicial:", anos_disponiveis, index=0)
+                    mes_inicio = st.selectbox("Mês inicial:", col_meses, index=0)
+                with col2:
+                    ano_fim = st.selectbox("Ano final:", anos_disponiveis, index=len(anos_disponiveis) - 1)
+                    mes_fim = st.selectbox("Mês final:", col_meses, index=11)
 
-                demandas_m3s_mensais = []
-                cols_demandas_const = st.columns(4)
+            data_inicio = pd.Timestamp(year=ano_inicio, month=meses_dict[mes_inicio] + 1, day=1)
+            data_fim = pd.Timestamp(year=ano_fim, month=meses_dict[mes_fim] + 1, day=1)
 
-                for i in range(12):
-                    with cols_demandas_const[i % 4]:
-                        val = st.number_input(
-                            f"Retirada {meses_nomes_curto[i]} (m³/s)",
-                            key=f"dem_const_{i}",
-                            min_value=0.0,
-                            value=1.0,
-                            step=0.1,
-                            format="%.2f"
-                        )
-                        demandas_m3s_mensais.append(val)
-
-                demandas_hm3_ciclo_anual = [converter_m3s_para_hm3mes(val) for val in demandas_m3s_mensais]
-                demandas = np.tile(demandas_hm3_ciclo_anual, int(np.ceil(meses / 12)))[:meses]
-                # --- FIM DA ALTERAÇÃO ---
-
-                st.markdown("#### 📥 Informe os valores de afluência para cada mês (em **hm³/mês**)")
-                afluencias = []
-                cols_afluencia = st.columns(4)
-                for i in range(meses):
-                    with cols_afluencia[i % 4]:
-                        val = st.number_input(f"Afluência Mês {i + 1}", key=f"afl_mes_{i}", min_value=0.0, value=1.0,
-                                              step=0.1,
-                                              format="%.2f")
-                        afluencias.append(val)
-                afluencias = np.array(afluencias)
-
-                evaporacao_mm = np.tile(evaporacao_mm_anual, int(np.ceil(meses / 12)))[:meses]
-
-        else:  # Opção "Dados Históricos"
-            dados_vazao_acude = vazoes[vazoes['COD'] == cod_acude]
-            if dados_vazao_acude.empty:
-                st.warning(
-                    "Não há dados históricos de vazão para este açude. A simulação com dados históricos não é possível.")
+            if data_inicio > data_fim:
+                st.warning("⚠️ Data inicial deve ser anterior ou igual à data final. Por favor, corrija a seleção.")
                 st.stop()
-            else:
-                anos_disponiveis = sorted([ano for ano in dados_vazao_acude['ANO'].unique() if ano != 1910])
-                col_meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
-                meses_dict = {nome: idx for idx, nome in enumerate(col_meses)}
 
-                with st.expander("📅 Selecione o intervalo de dados históricos para AFLUÊNCIA"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        ano_inicio = st.selectbox("Ano inicial:", anos_disponiveis, index=0)
-                        mes_inicio = st.selectbox("Mês inicial:", col_meses, index=0)
-                    with col2:
-                        ano_fim = st.selectbox("Ano final:", anos_disponiveis, index=len(anos_disponiveis) - 1)
-                        mes_fim = st.selectbox("Mês final:", col_meses, index=11)
+            datas_simulacao = pd.date_range(start=data_inicio, end=data_fim, freq='MS')
 
-                data_inicio = pd.Timestamp(year=ano_inicio, month=meses_dict[mes_inicio] + 1, day=1)
-                data_fim = pd.Timestamp(year=ano_fim, month=meses_dict[mes_fim] + 1, day=1)
-
-                if data_inicio > data_fim:
-                    st.warning("⚠️ Data inicial deve ser anterior ou igual à data final. Por favor, corrija a seleção.")
-                    st.stop()
-
-                datas_simulacao = pd.date_range(start=data_inicio, end=data_fim, freq='MS')
-
-                afluencias_m3s = []
-                for data in datas_simulacao:
-                    linha = dados_vazao_acude[dados_vazao_acude['ANO'] == data.year]
-                    if not linha.empty:
-                        try:
-                            val = float(linha.iloc[0][col_meses[data.month - 1]])
-                            afluencias_m3s.append(val)
-                        except (ValueError, TypeError):
-                            afluencias_m3s.append(0.0)
-                    else:
+            afluencias_m3s = []
+            for data in datas_simulacao:
+                linha = dados_vazao_acude[dados_vazao_acude['ANO'] == data.year]
+                if not linha.empty:
+                    try:
+                        val = float(linha.iloc[0][col_meses[data.month - 1]])
+                        afluencias_m3s.append(val)
+                    except (ValueError, TypeError):
                         afluencias_m3s.append(0.0)
+                else:
+                    afluencias_m3s.append(0.0)
 
-                afluencias = np.array([converter_m3s_para_hm3mes(val) for val in afluencias_m3s])
-                meses = len(afluencias)
+            afluencias = np.array([converter_m3s_para_hm3mes(val) for val in afluencias_m3s])
+            meses = len(afluencias)
 
-                st.markdown("#### 🔧 Defina as retiradas (demandas) mensais em m³/s")
+            st.markdown("#### 🔧 Defina as retiradas (demandas) em m³/s")
+            modo_demanda = st.radio("Escolha o tipo de entrada:", ["12 valores mensais", "1 valor constante"], horizontal=True)
+
+            if modo_demanda == "12 valores mensais":
                 st.caption("Estes valores se repetirão anualmente durante o período simulado.")
-
                 demandas_m3s_mensais = []
                 cols_demandas_hist = st.columns(4)
-
                 for i in range(12):
                     with cols_demandas_hist[i % 4]:
                         val = st.number_input(
@@ -460,18 +419,22 @@ def main():
                             format="%.2f"
                         )
                         demandas_m3s_mensais.append(val)
+            else:
+                valor_constante = st.number_input("Informe o valor constante de demanda (m³/s):", min_value=0.0, value=1.0, step=0.1, format="%.2f")
+                demandas_m3s_mensais = [valor_constante] * 12
 
-                demandas_list = []
-                for data in datas_simulacao:
-                    mes_index = data.month - 1
-                    demanda_m3s_do_mes = demandas_m3s_mensais[mes_index]
-                    demandas_list.append(converter_m3s_para_hm3mes(demanda_m3s_do_mes))
 
-                demandas = np.array(demandas_list)
+            demandas_list = []
+            for data in datas_simulacao:
+                mes_index = data.month - 1
+                demanda_m3s_do_mes = demandas_m3s_mensais[mes_index]
+                demandas_list.append(converter_m3s_para_hm3mes(demanda_m3s_do_mes))
 
-                evaporacao_mm = np.tile(evaporacao_mm_anual, int(np.ceil(meses / 12)))[:meses]
+            demandas = np.array(demandas_list)
 
-                st.info(f"Simulando de {mes_inicio}/{ano_inicio} até {mes_fim}/{ano_fim} ({meses} meses).")
+            evaporacao_mm = np.tile(evaporacao_mm_anual, int(np.ceil(meses / 12)))[:meses]
+
+            st.info(f"Simulando de {mes_inicio}/{ano_inicio} até {mes_fim}/{ano_fim} ({meses} meses).")
 
         st.write("")
 

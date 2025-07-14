@@ -22,8 +22,7 @@ def carregar_dados():
 # - Curva cota-área-volume (curva_av)
 # - Séries de afluência, demanda e evaporação
 # - Restrições operacionais: volume máximo, mínimo operacional e volume morto (se fornecidas)
-def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None):
-    # Tratamento da curva para garantir que volume e área são numéricos e não nulos
+def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evaporacao_mm, restricoes=None, datas_simulacao=None):    # Tratamento da curva para garantir que volume e área são numéricos e não nulos
     curva_av['volume'] = pd.to_numeric(curva_av['volume'], errors='coerce')
     curva_av['area'] = pd.to_numeric(curva_av['area'], errors='coerce')
     curva_av = curva_av.dropna(subset=['volume', 'area'])
@@ -96,13 +95,25 @@ def simular_reservatorio(volume_inicial, curva_av, afluencias, demandas, evapora
         volumes[t + 1] = v_atual
         retiradas[t] = retirada
 
+    nao_atendida = retiradas < demandas
+    frequencia_nao_atendida = np.sum(nao_atendida) / len(demandas) * 100
+    meses_nao_atendidos = []
+    for t in range(n_meses):
+        if retiradas[t] < demandas[t]:
+            if datas_simulacao is not None:
+                meses_nao_atendidos.append(datas_simulacao[t].strftime("%Y-%m"))
+            else:
+                meses_nao_atendidos.append(f"Mês {t + 1}")
+
     return {
         'volumes': volumes[:-1],
         'retiradas': retiradas,
         'evaporacao': evap_hm3,
         'vertimento': vertimentos,
         'alertas': alertas,
-        'afluencias': afluencias
+        'afluencias': afluencias,
+        'frequencia_nao_atendida': frequencia_nao_atendida,
+        'meses_nao_atendidos': meses_nao_atendidos
     }
 
 
@@ -126,6 +137,11 @@ def gerar_relatorio_pdf(nome_reservatorio, resultados):
     linha(f"Volume final: {resultados['volumes'][-1]:.2f} hm³")
     linha(f"Afluência total: {sum(resultados['afluencias']):.2f} hm³")
     linha(f"Retirada total: {sum(resultados['retiradas']):.2f} hm³")
+    linha(f"Frequência de não atendimento: {resultados['frequencia_nao_atendida']:.1f}% dos meses")
+    if resultados['meses_nao_atendidos']:
+        linha(f"Meses com demanda não atendida: {', '.join(resultados['meses_nao_atendidos'])}")
+    else:
+        linha("Demanda atendida em todos os meses.")
     linha("")
 
     def nova_pagina_se_necessario():
@@ -207,6 +223,14 @@ def display_results(nome_reservatorio, resultados, datas_simulacao=None):
         df_resultados[col] = df_resultados[col].round(2)
 
     st.dataframe(df_resultados)
+
+    st.info(f"🔎 Frequência de não atendimento da demanda: {resultados['frequencia_nao_atendida']:.1f}% dos meses")
+
+    if resultados['meses_nao_atendidos']:
+        meses = ', '.join(resultados['meses_nao_atendidos'])
+        st.warning(f"📆 Demanda não atendida nos meses: {meses}")
+    else:
+        st.success("✅ A demanda foi atendida em todos os meses.")
 
     csv = df_resultados.to_csv(index=False).encode('utf-8')
     st.download_button(
@@ -448,7 +472,8 @@ def main():
             if 'afluencias' in locals() and 'demandas' in locals() and 'evaporacao_mm' in locals():
                 resultados = simular_reservatorio(
                     volume_inicial, curva_av, afluencias, demandas, evaporacao_mm,
-                    restricoes=restricoes_df
+                    restricoes=restricoes_df,
+                    datas_simulacao = datas_simulacao
                 )
                 display_results(nome_escolhido, resultados, datas_simulacao)
             else:
